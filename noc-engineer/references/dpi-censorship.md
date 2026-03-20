@@ -1,92 +1,98 @@
-# DPI и цензура — обход блокировок
+# DPI, цензура и обход блокировок — Россия 2024-2025
 
-## Как работает ТСПУ (Россия)
+## Философия подхода
 
-ТСПУ (Технические Средства Противодействия Угрозам) — система глубокой инспекции пакетов, установленная на стыках операторов связи согласно Постановлению Правительства №1316/1351.
-
-**Архитектура:**
-```
-Пользователь → Оператор связи → [ТСПУ оборудование] → Интернет
-                                        ↑
-                              Эшелон (Ростелеком)
-                              реализует блокировки
-                              по команде РКН
-```
-
-**Что умеет ТСПУ:**
-- Блокировка по IP (реестр РКН)
-- Блокировка по SNI (TLS ClientHello)
-- DPI по сигнатурам протоколов (WireGuard handshake, OpenVPN, etc.)
-- Статистический анализ — высокая энтропия → подозрительно
-- Замедление (throttling) без полной блокировки — Twitter 2021
-- BGP-манипуляции для отдельных AS
-
-**Что НЕ умеет (пока):**
-- Расшифровывать TLS 1.3 с правильным SNI
-- Отличить Reality от настоящего HTTPS без shortId
-- Блокировать QUIC без ущерба для легального трафика
+Этот файл — не просто справочник. Когда пользователь описывает проблему с блокировкой:
+1. **Диагностируй сначала** — определи точный метод блокировки (IP, SNI, протокол, whitelist)
+2. **Учитывай контекст** — регион, оператор, тип подключения (мобильный/домашний) дают разные ограничения
+3. **Предлагай решение под ситуацию** — не один вариант, а оптимальный с объяснением почему
+4. **Думай на опережение** — что будет делать регулятор дальше, как сделать решение устойчивым
+5. **Проверяй актуальность** — репо и ситуация меняются, смотри свежие issues/коммиты
 
 ---
 
-## Методы блокировок
+## Модели блокировок в РФ
 
-### 1. IP-блокировка
-Простейший метод. РКН ведёт реестр IP.
+### 1. Blacklist (обычные блокировки)
+Реестр РКН + ТСПУ на стыках операторов. Блокируется конкретный домен/IP.
 
-Обход: смена IP сервера, IPv6, CDN (Cloudflare).
+**Признаки:** работает из-за рубежа, не работает в РФ. traceroute обрывается на узлах оператора.
 
-### 2. SNI-фильтрация
-DPI читает поле `server_name` в TLS ClientHello (до шифрования).
+**Решение:** любой VPN/прокси с зарубежным сервером.
 
-```
-TLS ClientHello → SNI: "blocked-site.com" → блокировать
-```
+### 2. Whitelist (мобильный интернет под ограничениями)
+Разрешён только ограниченный список ресурсов. **Принципиально другая модель** — обычный VPN не поможет, если его сервер не в whitelist.
 
-Обходы:
-- **ESNI/ECH** (Encrypted Client Hello) — SNI зашифрован, но поддержка пока ограничена
-- **Reality** — SNI ведёт на легальный сайт
-- **Domain Fronting** — SNI ≠ Host header (CDN)
+**Признаки:**
+- Мобильный интернет, работает только часть сайтов
+- `connection reset` или `timeout` на нелистованные ресурсы
+- Даже ping до зарубежных IP не проходит
+- Варьируется по оператору и даже по вышке
 
-### 3. Fingerprinting протоколов
-DPI знает сигнатуры WireGuard, OpenVPN, etc.
+**Регионы:** преимущественно Северный Кавказ, зоны боевых действий, иногда вводится временно по всей РФ при обострениях.
 
-**WireGuard handshake initiation** (первые 4 байта = `0x01000000`) — легко детектируется.
-AmneziaWG рандомизирует эти байты.
+**Решение:** нужен РФ-сервер с "белым" IP (из разрешённых диапазонов) как входная точка.
 
-### 4. Статистический анализ
-Трафик с высокой энтропией без распознаваемого протокола → подозрительно.
-Решение: мимикрия под TLS/HTTPS (Reality, Trojan, obfs4 с `obfs=tls`).
+### 3. Throttling без полной блокировки
+Трафик до ресурса замедляется до 14 кбит/с (или хуже). Пример: YouTube 2023-2024.
 
-### 5. Timing analysis
-Анализ паттернов соединений. Против него сложнее — нужен traffic padding.
+**Признаки:** сайт открывается, но очень медленно. traceroute доходит, но latency высокая.
+
+**Решение:** zapret/zapret2/b4 (DPI-десинхронизация) — не нужен внешний сервер.
+
+### 4. Протокольная блокировка
+ТСПУ детектирует VPN-протоколы по сигнатурам и блокирует.
+
+**Признаки:** VPN подключается, но трафик не идёт или соединение рвётся через несколько секунд.
+
+**Решение:** обфускация (AmneziaWG, VLESS+Reality, Hysteria2).
 
 ---
 
-## zapret — пассивный обход для браузера
+## Диагностика: как определить тип блокировки
 
-[zapret](https://github.com/bol-van/zapret) — инструмент для обхода DPI без VPN, на уровне TCP/UDP манипуляций.
-
-**Принцип:** модифицирует пакеты так, чтобы DPI не смог правильно проанализировать трафик, но сервер всё равно принял соединение.
-
-**Методы:**
-- `--dpi-desync` — десинхронизация TCP потока для DPI
-- `--hostlist` — применять только к заблокированным доменам
-- Фрагментация TLS ClientHello
-- TTL манипуляции
-
-**Установка (Linux):**
 ```bash
-git clone https://github.com/bol-van/zapret
-cd zapret
-./install_easy.sh   # интерактивный установщик
+# 1. Базовая проверка
+ping 8.8.8.8                          # ICMP до Google DNS
+curl -v https://example.com           # HTTP(S) до заблокированного сайта
+curl -v --connect-timeout 5 https://IP_адрес  # напрямую по IP (минуя DNS)
 
-# Или вручную
-./blockcheck.sh     # автоопределение метода для твоего провайдера
+# 2. Определить на каком уровне блокировка
+dig +short blocked-site.com           # DNS отвечает? Правильный IP?
+dig @8.8.8.8 blocked-site.com        # Через Google DNS — отличается?
+curl -v --resolve blocked-site.com:443:$(dig +short blocked-site.com) https://blocked-site.com
+# vs
+curl -v --resolve blocked-site.com:443:<другой_IP> https://blocked-site.com
+# Если второй работает — SNI блокировка, а не IP
+
+# 3. traceroute — где обрывается
+mtr -n --report blocked-site.com
+# Обрыв на AS8359 (МТС), AS8976 (Ростелеком), AS3216 (Билайн) → ТСПУ
+
+# 4. Проверить whitelist режим
+# С мобильного — пингуй разные IP:
+ping 8.8.8.8        # Google — скорее всего заблокирован
+ping 77.88.8.8      # Яндекс DNS — в whitelist
+ping 51.250.x.x     # Yandex Cloud — в whitelist
+# Если российские отвечают, а зарубежные нет → whitelist режим
 ```
 
-**nfqws — основной компонент:**
+---
+
+## Инструменты: обзор и когда использовать
+
+### zapret / zapret2 (bol-van)
+- **GitHub:** https://github.com/bol-van/zapret (основной), https://github.com/bol-van/zapret2 (новая версия)
+- **Что делает:** манипуляция пакетами через NFQUEUE/WFP для десинхронизации DPI
+- **Когда:** throttling, SNI-блокировки, без нужды во внешнем сервере
+- **Платформы:** Linux, Windows, OpenWrt, Keenetic
+- **Не поможет:** whitelist режим (трафик физически не проходит)
+
 ```bash
-# Пример запуска
+# Автоопределение метода для провайдера
+cd zapret && ./blockcheck.sh
+
+# Типовой запуск nfqws против YouTube throttling
 nfqws --daemon \
   --qnum=200 \
   --dpi-desync=fake,disorder2 \
@@ -94,189 +100,319 @@ nfqws --daemon \
   --dpi-desync-fooling=md5sig \
   --hostlist=/opt/zapret/ipset/zapret-hosts-user.txt
 
-# iptables правила для перехвата
+# iptables перехват
 iptables -t mangle -A OUTPUT -p tcp --dport 443 \
   -m connbytes --connbytes 1:6 --connbytes-dir=original --connbytes-mode=segments \
   -m mark ! --mark 0x40000000/0x40000000 \
   -j NFQUEUE --queue-num 200 --queue-bypass
 ```
 
-**tpws — для HTTP:**
+**zapret2** — переработанная версия с улучшенной архитектурой, blockcheck2 скриптом. Актуальнее для новых установок.
+
+### b4 (DanielLavrushin)
+- **GitHub:** https://github.com/DanielLavrushin/b4
+- **Что делает:** то же что zapret, но с GUI и проще в настройке
+- **Когда:** Windows, нужен интерфейс, не хочется возиться с командной строкой
+- **1.1k звёзд**, активно поддерживается
+
+### Zapret + AmneziaVPN на роутере (Zzoomrus)
+- **GitHub:** https://github.com/Zzoomrus/Zapret-AmneziaVPN
+- **Что делает:** комбо — zapret для обхода замедления YouTube + AmneziaWG для остального
+- **Когда:** роутер (Keenetic и другие), хочется чтобы работало для всех устройств в сети
+- Поддерживает Keenetic через отдельный README
+
+### MTProxy (Telegram)
+- **GitHub:** https://github.com/TelegramMessenger/MTProxy
+- **Что делает:** прокси для Telegram по протоколу MTProto
+- **Когда:** Telegram заблокирован, нужен только он
+- **Порт:** рекомендуется 8443 (443 часто занят)
+- Разворачивается рядом с Amnezia-контейнерами без конфликтов
+
 ```bash
-tpws --daemon --port=988 --split-pos=2 --hostlist=/opt/zapret/ipset/...
+docker run -d \
+  --name mtproxy \
+  -p 8443:443 \
+  -e SECRET=$(openssl rand -hex 16) \
+  telegrammessenger/proxy:latest
 ```
 
-**Определение рабочего метода:**
+### whitebox (quyxishi) — мониторинг AmneziaWG
+- **GitHub:** https://github.com/quyxishi/whitebox
+- **Что делает:** Prometheus exporter для AmneziaWG (форк с поддержкой amnezia-xray-core)
+- **Когда:** нужен мониторинг AWG нод в Grafana
+- Заменяет зависимость xray-core на amnezia-xray-core
+
+### xraycheck (WhitePrime)
+- **GitHub:** https://github.com/WhitePrime/xraycheck
+- **Что делает:** технический анализ конфигов VLESS/VMess/Trojan/SS/Hysteria/MTProto с эмуляцией сетевых ограничений
+- **Когда:** нужно проверить/отладить конфиг VPN без реального ограниченного подключения; тест на устойчивость к DPI
+- Полезен для автоматизированного тестирования конфигов
+
+### RealiTLScanner (XTLS)
+- **GitHub:** https://github.com/XTLS/RealiTLScanner
+- **Что делает:** сканирует диапазон IP, ищет серверы подходящие для Reality (TLS 1.3, h2, нужный SNI)
+- **Когда:** выбор оптимального `dest` домена для Reality конфига
+
 ```bash
-cd zapret && ./blockcheck.sh
-# Скрипт автоматически тестирует разные методы и показывает что работает
+# Скомпилировать и запустить
+go build -o RealiTLScanner .
+./RealiTLScanner -ip 1.1.1.0/24 -timeout 3 -thread 100
+# Выдаёт список IP с доменами, поддерживающими TLS 1.3
 ```
 
 ---
 
-## Проверка блокировок
+## Whitelist bypass: детальный разбор
 
-### Проверить заблокирован ли ресурс
+### Диапазоны IP в whitelist (актуально начало 2025)
+
+| CIDR | Провайдер | Операторы | Примечания |
+|------|-----------|-----------|------------|
+| `51.250.0.0/17` | Yandex Cloud | МТС, Мегафон, Билайн, Т2, Yota | Самый надёжный вариант |
+| `84.201.0.0/16` | Yandex Cloud | МТС, Мегафон, Т2, Билайн | Широкое покрытие |
+| `95.163.248.0/22` | VK Cloud (MSM) | Все основные | Часто занят, сложно получить |
+| `217.16.24.0/21` | VK Cloud | МТС, Т2 | |
+| `158.160.0.0/17` | Yandex Cloud | Т2 | Снижается актуальность |
+| `185.39.206.0/24` | TimeWeb Cloud | Т2 | |
+| `91.222.239.0/24` | TimeWeb Cloud | Билайн, Т-Моб | |
+
+**Актуальный список:** https://github.com/hxehex/russia-mobile-internet-whitelist — обновляется, содержит `cidrwhitelist.txt` и `whitelist.txt` (домены).
+
+**Важно:** ситуация хаотична. Yota (дочка Мегафона) может иметь более строгий whitelist чем Мегафон на той же вышке. В деревнях бывает полный blackout. Варьируется до уровня конкретной вышки.
+
+### Получение нужного IP в Yandex Cloud
+
 ```bash
-# Через разные DNS резолверы
-dig @8.8.8.8 blocked-site.com
-dig @1.1.1.1 blocked-site.com
-dig @77.88.8.8 blocked-site.com  # Яндекс DNS
+# Диапазон 51.250.x.x:
+# При создании ВМ включить "Защита от DDoS" → зона a или b
+# ~95% случаев выдаётся 51.250.x.x
 
-# Сравнить с локальным резолвером
-dig blocked-site.com
+# Диапазон 84.201.x.x:
+# Без DDoS защиты, зона a/b/d
 
-# Traceroute — где обрывается?
-mtr --report --no-dns blocked-site.com
-traceroute -n blocked-site.com
-
-# Проверить SNI блокировку
-curl -v --resolve blocked-site.com:443:<другой-ip> https://blocked-site.com
+# Если выпал не тот диапазон — пересоздать ВМ (несколько попыток)
+# Проверить ДО настройки:
+ping <new-vm-ip>  # с мобильного в зоне ограничений
 ```
 
-### Определить метод блокировки
-```bash
-# 1. Получить IP
-dig +short blocked-site.com
+### Архитектуры обхода whitelist
 
-# 2. Проверить IP напрямую
-curl -v https://<ip> -H "Host: blocked-site.com"
-
-# 3. Проверить с другим SNI
-curl -v --insecure https://<ip> --resolve fake-domain.com:443:<ip>
-
-# Если (2) работает а через домен нет → SNI блокировка
-# Если IP тоже не работает → IP блокировка
+**Вариант 1: Двойной Xray (3x-ui на обоих серверах)**
 ```
-
-### Реестр РКН
-```bash
-# Проверить есть ли IP/домен в реестре
-# https://eais.rkn.gov.ru/ — официальный
-# https://blocklist.rkn.gov.ru/ — API
-curl "https://blocklist.rkn.gov.ru/check/?domain=example.com"
+Клиент → РФ сервер (белый IP, 3x-ui) → зарубежный сервер (3x-ui) → интернет
 ```
+Плюс: удобное управление через UI, легко добавлять клиентов
+Минус: два слоя терминации TLS, чуть больше latency
 
----
-
-## DNS — обход и DoH/DoT
-
-### DNS over HTTPS (DoH)
-```bash
-# Проверить через DoH вручную
-curl -s "https://cloudflare-dns.com/dns-query?name=blocked-site.com&type=A" \
-  -H "accept: application/dns-json"
-
-curl -s "https://dns.google/resolve?name=blocked-site.com&type=A"
+**Вариант 2: nginx stream / iptables DNAT (проще)**
 ```
-
-### Настройка DoH в systemd-resolved
-```ini
-# /etc/systemd/resolved.conf
-[Resolve]
-DNS=1.1.1.1#cloudflare-dns.com 8.8.8.8#dns.google
-DNSOverTLS=yes
-DNSSEC=yes
+Клиент → РФ сервер (белый IP, nginx/iptables) → зарубежный сервер → интернет
 ```
-
-### AdGuard DNS / NextDNS как обход
-Для мобильных — встроенный "Private DNS" в Android: `dns.adguard.com`
-
----
-
-## Белые списки (whitelist-режим) — отдельная модель блокировок
-
-В отличие от обычных блокировок (blacklist), белые списки — **разрешён только ограниченный набор ресурсов**, всё остальное дропается. Применяется в отдельных регионах РФ (преимущественно Северный Кавказ, Донецк/Луганск зоны), периодически вводится при обострениях.
-
-### Принцип обхода
-
-Нужен **РФ сервер с "белым" IP** (из диапазонов, разрешённых операторами) как точка входа:
-
-```
-Клиент → РФ сервер (белый IP) → Зарубежный сервер → Интернет
-```
-
-РФ сервер либо:
-- Проксирует трафик через 3x-ui + Xray (два инстанса VLESS+Reality)
-- Или просто форвардит порт 443 через nginx stream / iptables (проще, меньше latency)
-
-### Диапазоны IP в белых списках операторов (актуально на начало 2025)
-
-| CIDR | Провайдер | Операторы |
-|------|-----------|-----------|
-| `51.250.0.0/17` | Yandex Cloud | Билайн, Т-Моб, МТС, Yota, Мегафон, Т2 |
-| `84.201.0.0/16` | Yandex Cloud | МТС, Мегафон, Т2, Билайн |
-| `158.160.0.0/17` | Yandex Cloud | Т2 (актуальность снижается) |
-| `95.163.248.0/22` | VK Cloud (Digital Networks MSM) | Билайн, Т-Моб, МТС, Yota, Мегафон, Т2 |
-| `217.16.24.0/21` | VK Cloud | МТС, Т2 |
-| `185.39.206.0/24` | TimeWeb Cloud | Т2 |
-| `91.222.239.0/24` | TimeWeb Cloud | Билайн, Т-Моб |
-
-> Диапазоны могут меняться — операторы добавляют/убирают. Актуальный список проверяй в тематических чатах.
-
-**Как получить IP из нужного диапазона (Yandex Cloud):**
-- Диапазон `51.250.x.x` — при создании ВМ включить защиту от DDoS, выбрать зону `a` или `b`; в ~95% случаев выдаётся `51.250.x.x`
-- Если выпал другой диапазон — пересоздать ВМ
-- Диапазон `84.201.x.x` — без DDoS защиты, тоже рабочий на большинстве операторов
-
-**Проверка IP перед настройкой:**
-```bash
-# С мобильного интернета в зоне с белыми списками
-ping <ip-сервера>
-# Если отвечает — IP в белом списке, можно использовать
-```
-
-### Схема через nginx stream (проще чем двойной Xray)
-
 ```nginx
 # /etc/nginx/nginx.conf
 stream {
     server {
         listen 443;
-        proxy_pass <зарубежный-сервер>:443;
+        proxy_pass <зарубежный>:443;
         proxy_buffer_size 16k;
     }
 }
 ```
+```bash
+# Или через iptables
+iptables -t nat -A PREROUTING -p tcp --dport 443 \
+  -j DNAT --to-destination <зарубежный>:443
+iptables -t nat -A POSTROUTING -j MASQUERADE
+sysctl -w net.ipv4.ip_forward=1
+```
+Плюс: нет двойной TLS терминации, меньше latency, меньше точек отказа
+Минус: меньше контроля над клиентами
+
+**Вариант 3: VK TURN proxy (vk-turn-proxy / whitelist-bypass)**
+```
+Клиент → VK TURN серверы (155.212.x.x:19302, в whitelist) → зарубежный сервер
+```
+- **vk-turn-proxy** (cacggghp): туннелирует WireGuard через TURN серверы VK звонков по STUN ChannelData
+- **whitelist-bypass** (kulikov0): туннелирует весь трафик через WebRTC DataChannel VK звонка
+- Логин/пароль для TURN генерируются из ссылки на VK звонок
+- Трафик выглядит как обычный VK звонок
 
 ```bash
-# Или через iptables (ещё проще)
-iptables -t nat -A PREROUTING -p tcp --dport 443 \
-  -j DNAT --to-destination <зарубежный-сервер>:443
-iptables -t nat -A POSTROUTING -j MASQUERADE
+# vk-turn-proxy — сервер
+./server -listen 0.0.0.0:56000 -connect 127.0.0.1:<wg-port>
+
+# Клиент (Linux)
+./client-linux -peer <server-ip>:56000 -link <vk-call-link> -listen 127.0.0.1:9000 | sudo bash routes.sh
+# В WireGuard конфиге: Endpoint = 127.0.0.1:9000, MTU = 1420
 ```
 
-Плюс nginx/iptables подхода: не нужно терминировать TLS дважды, меньше latency, меньше точек отказа.
-
-### SNI для Reality в условиях белых списков
-
-Домен для Reality (`dest` / `serverNames`) должен быть доступен **через белый IP** — иначе handshake не пройдёт. Проверенные варианты:
-- `ads.x5.ru` — работает на всех основных операторах в большинстве регионов
-- `www.sberbank.ru`, `gosuslugi.ru` — как правило в белых списках везде
-
-### Риски
-
-- Яндекс и VK Cloud могут заблокировать аккаунт при обнаружении VPN-трафика (прецеденты есть)
-- РКН постепенно сужает диапазоны — то что работает сегодня, может не работать через месяц
-- При активном использовании IP может попасть в блок
+**SNI для Reality в whitelist условиях**
+Домен `dest` должен быть доступен через белый IP. Проверенные варианты:
+- `ads.x5.ru` — работает на большинстве операторов во многих регионах
+- `gosuslugi.ru`, `www.sberbank.ru` — как правило в whitelist везде
+- Для подбора: RealiTLScanner по диапазону `51.250.0.0/17`
 
 ---
 
-## Полезные ресурсы и инструменты
+## Списки доменов и IP для маршрутизации
+
+### itdoginfo/allow-domains
+- **GitHub:** https://github.com/itdoginfo/allow-domains
+- **Что это:** актуальный список заблокированных доменов в РФ в множестве форматов
+- **Форматы:** dnsmasq nfset/ipset, sing-box, xray geosite.dat, ClashX, Mikrotik, Kvas, RAW
+- **Категории:** YouTube, Discord, Meta, TikTok, Twitter, Anime, GeoBlock, Porn, News + H.O.D.C.A (Hetzner/OVH/DO/CF/AWS)
 
 ```bash
-# Проверка связности из разных точек мира
-# https://check-host.net
-# https://ping.pe
+# Xray geosite.dat
+curl -L https://github.com/itdoginfo/allow-domains/releases/latest/download/geosite.dat \
+  -o /usr/local/etc/xray/geosite.dat
 
-# Анализ BGP / AS
-whois -h whois.radb.net <ip>
-curl "https://stat.ripe.net/data/prefix-overview/data.json?resource=<ip>"
+# RAW список (Россия inside)
+curl https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-raw.lst
 
-# Что за AS у IP
-curl "https://ipinfo.io/<ip>"
-
-# Сканирование открытых портов (для своего сервера)
-nmap -sS -p- --min-rate 1000 <server-ip>
-nmap -sU -p 51820,443,8443 <server-ip>   # UDP порты
+# dnsmasq nfset (для OpenWrt >=23.05)
+curl https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-dnsmasq-nfset.lst
 ```
+
+Логика: добавляем resolved IP заблокированных доменов в nftables set `vpn_domains`, потом маршрутизируем через VPN только их.
+
+### hxehex/russia-mobile-internet-whitelist
+- **GitHub:** https://github.com/hxehex/russia-mobile-internet-whitelist
+- **Что это:** список доменов и IP которые остаются доступными в whitelist режиме
+- **Файлы:** `whitelist.txt` (домены), `cidrwhitelist.txt` (CIDR), `ipwhitelist.txt`
+- Полезен для понимания что можно использовать как "легальный" транспорт
+
+---
+
+## Аналитический фреймворк: как выбрать решение
+
+### Decision tree
+
+```
+Проблема с интернетом
+├── Мобильный интернет, большинство сайтов недоступно?
+│   └── WHITELIST режим
+│       ├── Есть РФ сервер с белым IP?
+│       │   ├── Да → nginx/iptables forward + VLESS+Reality на зарубежном
+│       │   └── Нет → VK TURN proxy (не нужен свой сервер) или получить YC VM
+│       └── Нет доступа к настройке сервера?
+│           └── VK TURN proxy (whitelist-bypass или vk-turn-proxy)
+│
+├── Конкретные сайты заблокированы (обычная блокировка)?
+│   ├── Нужно только для этих сайтов (не весь трафик)?
+│   │   └── zapret/zapret2/b4 — без внешнего сервера
+│   └── Нужен полный тоннель?
+│       ├── UDP не заблокирован → AmneziaWG 1.5 или Hysteria2
+│       └── UDP заблокирован → VLESS + Reality (TCP 443)
+│
+├── VPN подключается но рвётся/медленный?
+│   ├── Стандартный WireGuard → замени на AmneziaWG
+│   ├── Подозрение на DPI → xraycheck для диагностики
+│   └── MTU проблемы → ping -M do -s 1400 <host>, уменьшай MTU
+│
+└── YouTube/конкретный сервис тормозит?
+    └── zapret/zapret2 с blockcheck.sh — определит метод автоматически
+```
+
+### Устойчивость решений к эскалации
+
+| Решение | Устойчивость | Что может сломать |
+|---------|-------------|-------------------|
+| VLESS + Reality | Очень высокая | Ничего из известного на 2025 |
+| AmneziaWG 1.5 | Высокая | Если РКН начнёт блокировать UDP массово |
+| Hysteria2 | Высокая | Блокировка QUIC/UDP у провайдера |
+| zapret/zapret2 | Средняя | Обновление сигнатур ТСПУ |
+| VK TURN proxy | Средняя | Если VK заблокирует кастомные DataChannel |
+| nginx forward через YC IP | Средняя | YC бан аккаунта, изменение whitelist |
+
+### Комбинированные подходы (наиболее устойчиво)
+
+**Для мобильного whitelist:**
+```
+AmneziaWG 1.5 на РФ сервере (YC 51.250.x.x) → пробрасывает на зарубежный сервер
+```
+Лучше чем двойной VLESS: AWG быстрее, меньше overhead.
+
+**Для домашнего на роутере:**
+```
+zapret (YouTube + заблокированные сайты без VPN) 
++ AmneziaWG (всё остальное, selectively)
+```
+Реализовано в Zzoomrus/Zapret-AmneziaVPN для Keenetic.
+
+**Максимальная устойчивость:**
+```
+VLESS + Reality (основной) + Hysteria2 (резерв при TCP блокировке)
++ список доменов через itdoginfo/allow-domains для split-tunneling
+```
+
+---
+
+## Мониторинг и диагностика инфраструктуры
+
+### whitebox — Prometheus exporter для AWG
+```yaml
+# docker-compose.yml
+services:
+  whitebox:
+    image: ghcr.io/quyxishi/whitebox:latest
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    volumes:
+      - /etc/amnezia/awg:/etc/amnezia/awg:ro
+```
+
+Метрики в Grafana: количество пиров, трафик per-peer, last handshake.
+
+### xraycheck — тестирование конфигов
+```bash
+# Установка
+git clone https://github.com/WhitePrime/xraycheck
+cd xraycheck && pip install -r requirements.txt
+
+# Проверить конфиг с эмуляцией ограничений
+python xraycheck.py --config vless-reality.json --simulate-ru
+```
+
+### Автоматизированная проверка доступности
+```bash
+# Скрипт проверки белого IP
+#!/usr/bin/env bash
+check_whitelist() {
+  local ip=$1
+  # Пробуем подключиться к серверу через известно-заблокированный IP
+  timeout 3 nc -zv $ip 443 2>/dev/null && echo "OK: $ip" || echo "BLOCKED: $ip"
+}
+
+# Список тестовых IP (заведомо заблокированных)
+for ip in 8.8.8.8 1.1.1.1 142.250.0.0; do
+  check_whitelist $ip
+done
+```
+
+---
+
+## Актуальные ссылки для мониторинга ситуации
+
+```
+# Обновляй при каждом обращении к этой теме:
+https://github.com/hxehex/russia-mobile-internet-whitelist  — актуальный whitelist
+https://github.com/itdoginfo/allow-domains                   — актуальный blocklist
+https://github.com/bol-van/zapret2                           — свежие методы DPI обхода
+https://github.com/apernet/hysteria                          — обновления Hysteria2
+https://github.com/XTLS/RealiTLScanner                       — Reality SNI сканер
+```
+
+**Что смотреть в репо:** последние коммиты, открытые issues (часто там обсуждают что перестало работать), README изменения.
+
+---
+
+## Риски и ограничения
+
+| Риск | Вероятность | Митигация |
+|------|-------------|-----------|
+| Бан аккаунта Yandex Cloud | Средняя | Регистрировать на разные аккаунты, не превышать разумный трафик |
+| Изменение whitelist диапазонов | Высокая (регулярно) | Мониторить hxehex/russia-mobile-internet-whitelist |
+| Блокировка VK TURN серверов | Низкая (VK сам в whitelist) | — |
+| Детектирование Reality | Очень низкая | Регулярно обновлять Xray-core |
+| Блокировка UDP у провайдера | Средняя для мобильных | Иметь TCP-fallback (Reality) |

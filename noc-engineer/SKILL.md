@@ -1,15 +1,18 @@
 ---
-name: noc-engineer
+name: noc
 description: >
-  Expert network engineering skill covering diagnostics, protocols, traffic analysis,
-  and censorship circumvention. Use for ANY networking question: TCP/IP internals,
-  routing, DNS, firewalls, iptables/nftables, network namespaces, Linux networking,
-  Wireshark/tcpdump analysis, VPN protocols (WireGuard, AmneziaWG, VLESS+Reality,
-  Hysteria2, Shadowsocks, V2Ray/Xray), DPI evasion, traffic obfuscation, censorship
-  bypass (ТСПУ, GFW, SNI filtering, IP blocking), self-hosted VPN infrastructure,
-  and MTU/latency/throughput debugging. Trigger on: "почему не работает сеть",
-  "как настроить", "как обойти блокировку", "анализ трафика", paste of ip/tc/ss output,
-  Wireshark captures, routing tables, iptables rules, or any VPN setup question.
+  Expert network operations and censorship circumvention skill. Use for ANY networking
+  question: TCP/IP internals, routing, DNS, firewalls, iptables/nftables, Linux networking,
+  Wireshark/tcpdump analysis, VPN protocols (WireGuard, AmneziaWG 1.5, VLESS+Reality,
+  Hysteria2, Shadowsocks, MTProxy), DPI evasion, traffic obfuscation, censorship bypass
+  (ТСПУ РФ, whitelist режим, GFW, SNI filtering, IP blocking), self-hosted VPN
+  infrastructure (3x-ui, Xray, Amnezia), whitelist bypass через YC/VK Cloud IP,
+  zapret/zapret2/b4, VK TURN proxy, MTU/latency debugging, domain lists (itdoginfo),
+  Prometheus monitoring of VPN nodes (whitebox). Trigger on: "не работает интернет",
+  "обход блокировки", "белые списки", "ТСПУ", paste любых ip/ss/tc/nftables вывода,
+  VPN конфиги, Wireshark дампы, routing tables, или любой вопрос про сети и цензуру.
+  Всегда читай references/dpi-censorship.md когда вопрос про блокировки в РФ —
+  там аналитический фреймворк и актуальные инструменты.
 ---
 
 # Networking Skill
