@@ -2,14 +2,16 @@
 name: frontend
 description: >
   Expert frontend development skill. Use for ANY frontend question: React (hooks,
-  context, suspense, server components), Svelte 5 (runes, snippets, stores),
-  TypeScript на фронте, Vite, TailwindCSS, CSS (animations, grid, flexbox),
-  state management (Zustand, Jotai, Svelte stores), routing (TanStack Router,
-  React Router, SvelteKit), data fetching (TanStack Query, SWR), формы (React Hook Form,
-  Svelte), Telegram Mini Apps (WebApp API), SSR/SSG, производительность фронта,
-  бандл-оптимизация, accessibility. Trigger на: написание компонентов, вопросы про
-  state, "как сделать анимацию", paste JSX/Svelte кода с ошибками, code review
-  фронтенда, архитектура фронт-приложения, Telegram WebApp интеграция.
+  context, suspense, server components), Next.js (App Router, RSC, Server Actions,
+  ISR, middleware), Astro (islands, content collections, SSG/SSR), Svelte 5 (runes,
+  snippets, SvelteKit), Bun as frontend runtime/bundler, TypeScript на фронте,
+  Vite, TailwindCSS, CSS (animations, grid, flexbox), state management (Zustand,
+  Jotai, Svelte stores), routing (TanStack Router, React Router), data fetching
+  (TanStack Query, SWR), формы (React Hook Form), Telegram Mini Apps (WebApp API),
+  производительность (Core Web Vitals, bundle optimization, virtualization),
+  accessibility. Trigger на: написание компонентов, "как сделать на Next.js",
+  вопросы про App Router vs Pages Router, Astro islands, SSR/SSG/ISR выбор,
+  paste JSX/Svelte/Astro кода с ошибками, code review, Telegram WebApp интеграция.
 ---
 
 # Frontend Skill
@@ -396,7 +398,245 @@ const buttonVariants = cva(
 
 ---
 
+## Next.js — App Router
+
+```typescript
+// app/users/[id]/page.tsx — Server Component по умолчанию
+interface Props { params: Promise<{ id: string }> }
+
+export default async function UserPage({ params }: Props) {
+  const { id } = await params
+  const user = await db.getUser(id)  // прямой вызов БД, не нужен API
+  if (!user) notFound()
+  return <UserProfile user={user} />
+}
+
+export async function generateMetadata({ params }: Props) {
+  const { id } = await params
+  const user = await db.getUser(id)
+  return { title: user?.name ?? 'User' }
+}
+
+// Статическая генерация
+export async function generateStaticParams() {
+  const users = await db.getAllUsers()
+  return users.map(u => ({ id: u.id }))
+}
+```
+
+### Server Actions
+
+```typescript
+'use server'
+import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
+
+export async function createUser(formData: FormData) {
+  const parsed = schema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { error: parsed.error.flatten().fieldErrors }
+
+  await db.users.create(parsed.data)
+  revalidatePath('/users')
+  redirect('/users')
+}
+
+// Client Component
+'use client'
+import { useActionState } from 'react'
+
+export function CreateUserForm() {
+  const [state, action, isPending] = useActionState(createUser, null)
+  return (
+    <form action={action}>
+      <input name="name" />
+      <button disabled={isPending}>{isPending ? 'Создаём...' : 'Создать'}</button>
+      {state?.error && <p>{JSON.stringify(state.error)}</p>}
+    </form>
+  )
+}
+```
+
+### Кэширование и ISR
+
+```typescript
+// fetch с ISR
+const data = await fetch('https://api.example.com/data', {
+  next: { revalidate: 3600 },  // обновлять раз в час
+})
+
+// no-store — всегда свежие данные (SSR)
+const live = await fetch('https://api.example.com/live', { cache: 'no-store' })
+
+// unstable_cache — для не-fetch источников (pgx, drizzle)
+import { unstable_cache } from 'next/cache'
+
+const getCachedUser = unstable_cache(
+  async (id: string) => db.getUser(id),
+  ['user'],
+  { revalidate: 300, tags: ['users'] },
+)
+
+// Инвалидация в Server Action
+import { revalidateTag } from 'next/cache'
+revalidateTag('users')
+```
+
+### RSC vs Client Component
+
+```
+Server Component (default)       Client Component ('use client')
+─────────────────────────        ──────────────────────────────
+✅ Прямой доступ к БД            ✅ useState, useEffect, hooks
+✅ Секреты не утекают            ✅ onClick, event handlers
+✅ Меньше JS в бандле            ✅ Browser APIs (localStorage)
+❌ Нет hooks, нет событий        ❌ Нет доступа к БД напрямую
+```
+
+### Middleware
+
+```typescript
+// middleware.ts
+import { NextRequest, NextResponse } from 'next/server'
+
+export function middleware(req: NextRequest) {
+  const token = req.cookies.get('token')?.value
+  if (!token && req.nextUrl.pathname.startsWith('/dashboard')) {
+    return NextResponse.redirect(new URL('/login', req.url))
+  }
+  return NextResponse.next()
+}
+
+export const config = { matcher: ['/dashboard/:path*'] }
+```
+
+---
+
+## Astro
+
+```astro
+---
+// src/pages/blog/[slug].astro
+import { getCollection } from 'astro:content'
+import Layout from '@/layouts/Layout.astro'
+
+export async function getStaticPaths() {
+  const posts = await getCollection('blog')
+  return posts.map(post => ({ params: { slug: post.slug }, props: { post } }))
+}
+
+const { post } = Astro.props
+const { Content } = await post.render()
+---
+
+<Layout title={post.data.title}>
+  <article>
+    <h1>{post.data.title}</h1>
+    <Content />
+  </article>
+</Layout>
+```
+
+### Content Collections
+
+```typescript
+// src/content/config.ts
+import { defineCollection, z } from 'astro:content'
+
+const blog = defineCollection({
+  type: 'content',
+  schema: z.object({
+    title: z.string(),
+    date: z.date(),
+    tags: z.array(z.string()).default([]),
+    draft: z.boolean().default(false),
+  }),
+})
+
+export const collections = { blog }
+```
+
+### Islands Architecture
+
+```astro
+---
+import HeavyChart from '@/components/Chart.tsx'
+import Counter from '@/components/Counter.svelte'
+---
+
+<!-- Статичный HTML — 0 JS -->
+<h1>Заголовок</h1>
+
+<!-- client:load — сразу -->
+<HeavyChart client:load />
+
+<!-- client:visible — когда попадает в viewport -->
+<HeavyChart client:visible />
+
+<!-- client:idle — когда браузер не занят -->
+<Counter client:idle />
+
+<!-- client:only — только клиент, без SSR -->
+<MapComponent client:only="react" />
+```
+
+### Когда Astro, когда Next.js
+
+| Сценарий | Astro | Next.js |
+|----------|-------|---------|
+| Блог, документация, лендинг | ✅ Идеально | Избыточно |
+| Максимальный Lighthouse | ✅ | Сложнее |
+| Разные фреймворки (React + Svelte) | ✅ Уникально | ❌ |
+| Fullstack: Auth, БД, API | Можно | ✅ Лучше |
+| Сложный интерактивный UI | Можно (islands) | ✅ Лучше |
+
+---
+
+## Bun — frontend tooling
+
+```bash
+# Bun вместо Node в любом frontend проекте
+bun create vite my-app --template react-ts
+bun install     # в разы быстрее npm
+bun run dev
+bun run build
+
+# Bun bundler (для простых проектов без Vite)
+bun build ./src/index.tsx --outdir ./dist --minify --sourcemap
+```
+
+```toml
+# bunfig.toml
+[test]
+environment = "happy-dom"  # DOM API в тестах без jsdom
+preload = ["./test/setup.ts"]
+```
+
+```typescript
+// test/setup.ts — DOM моки для Bun test
+import { mock } from 'bun:test'
+
+global.localStorage = {
+  getItem: mock(() => null),
+  setItem: mock(() => {}),
+  removeItem: mock(() => {}),
+  clear: mock(() => {}),
+  length: 0,
+  key: mock(() => null),
+}
+
+Object.defineProperty(window, 'matchMedia', {
+  value: mock((query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: mock(() => {}),
+    removeEventListener: mock(() => {}),
+  })),
+})
+```
+
+---
+
 ## Reference Files
 
-- `references/performance.md` — bundle optimization, lazy loading, Core Web Vitals
+- `references/performance.md` — bundle optimization, code splitting, виртуализация, Core Web Vitals, изображения, шрифты
 - `references/forms.md` — React Hook Form, Zod валидация, controlled/uncontrolled
