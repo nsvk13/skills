@@ -12,7 +12,7 @@ Install a `.skill` file in Claude.ai → Settings → Skills.
 
 ## Skills
 
-### [`devops`](./devops/)
+### [`devops`](./devops-core/)
 
 Full-stack DevOps and infrastructure engineering.
 
@@ -29,7 +29,7 @@ Full-stack DevOps and infrastructure engineering.
 
 ---
 
-### [`noc`](./noc/)
+### [`noc`](./noc-engineer/)
 
 Network operations, protocol analysis, and censorship circumvention.
 
